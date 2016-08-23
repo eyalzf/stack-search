@@ -1,9 +1,17 @@
-var stackexchange = require('stackexchange')
-var Entities = require('html-entities').AllHtmlEntities
+const stackexchange = require('stackexchange')
+const Entities = require('html-entities').AllHtmlEntities
+const {Wit, log} = require('node-wit');
 
-var entities = new Entities();
+const STACK_SEARCH_WIT_TOKEN = process.env.WIT_TOKEN
+const witClient = new Wit({
+  accessToken: STACK_SEARCH_WIT_TOKEN
+})
+
+const GREETINGS = ['hi', 'hello', 'hi there', 'yo', 'hola!', 'what\'s up?', 'hello there', 'howdy', 'sup', 'ahoy', 'aloha']
+
+const entities = new Entities();
 const options = { version: 2.2 }
-let context = new stackexchange(options)
+const context = new stackexchange(options)
 
 let searchQuery = {
   site: 'stackoverflow',
@@ -37,72 +45,120 @@ module.exports = function(robot) {
     let botNameRegEx = new RegExp("@*" + msg.robot.name + ":*")
     let msgTxt = msg.message.text.replace(botNameRegEx, '').trim()
 
-    let userId = msg.message.user.id
+    // See if this is a response for question choice
+    if (handleUserQuestionChoice(msgTxt, msg, robot)) return
 
-    // Check if user already asked a question
-    let userData = robot.brain.get(userId)
-    if (userData) {
-      let msgIdx = parseInt(msgTxt)
+    witClient.message(msgTxt, {})
+    .then((data) => {
 
-      // If not a number assume its a new question
-      if (!isNaN(msgIdx)) {
+      console.log('Wit response', JSON.stringify(data))
 
-        // Check that the user provided a valid question number
-        if (msgIdx < 1 || msgIdx > userData.questions.length) {
-          msg.reply('Didn\'t get that.. here are the options again:\n' + formatPossibleQuestions(userData.questions))
+      // Check if there's an intent
+      if (data.entities.intent) {
+        let intent = data.entities.intent[0].value
+
+        console.log('Intent: ', intent)
+
+        // Greet back
+        if (intent === "greeting") {
+          msg.reply(GREETINGS[Math.floor(Math.random() * GREETINGS.length)])
           return
         }
 
-        // Answer question
-        answerQuestion(userData.questions[msgIdx - 1].question_id, userData.questions[msgIdx - 1].title, msg)
+        // Say what this bot does
+        if (intent === "help") {
+          msg.reply('I\'m a technical wiz. Just ask me any technical question')
+          return
+        }
+      }
 
-        // Clear user question
-        robot.brain.remove(userId)
-
+      // Check if there's a technical question
+      if (data.entities.tech_question && data.entities.tech_question[0].confidence > 0.5) {
+        handleQuestion(data.entities.tech_question[0].value, msg, robot)
         return
       }
-    }
 
-    // Clear user question
-    robot.brain.remove(userId)
+      handleQuestion(msgTxt, msg, robot)
+    })
+    .catch((err) => {
+      console.error('Wit error', err)
+      handleQuestion(msgTxt, msg, robot)
+    })
+  });
+}
 
-    // If message is just one word don't run the search
-    if (msgTxt.split(' ').length === 1) {
-      msg.reply('Not quite sure what you expect me to do with *' + msgTxt + '*')
+function handleQuestion(questionTxt, msg, robot) {
+
+  // Clear user question
+  let userId = msg.message.user.id
+  robot.brain.remove(userId)
+
+  // If message is just one word don't run the search
+  if (questionTxt.split(' ').length === 1) {
+    msg.reply('Not quite sure what you expect me to do with *' + questionTxt + '*')
+    return
+  }
+
+  searchQuery.q = questionTxt
+
+  // Perform advanced search
+  context.search.advanced(searchQuery, function(err, response) {
+    if (err) {
+      console.error('Search error', err);
+      msg.send('Oh oh.. something went wrong with search', err)
       return
     }
 
-    searchQuery.q = msgTxt
+    if (response.items.length === 0) {
+      msg.reply('Wow.. this is too much for me, don\'t have an answer for you. Try rephrasing your question')
+      return
+    }
 
-    // Perform advanced search
-    context.search.advanced(searchQuery, function(err, response) {
-      if (err) {
-        console.error('Search error', err);
-        msg.send('Oh oh.. something went wrong with search', err)
-        return
+    if (response.items.length === 1) {
+      answerQuestion(response.items[0].question_id, response.items[0].title, msg)
+      return
+    }
+
+    // Get the top 3 questions
+    let questions = response.items.sort((q1, q2) => {
+      return q2.up_vote_count - q1.up_vote_count
+    }).slice(0, 3);
+
+    // Set the user questions
+    robot.brain.set(userId, {questions: questions})
+
+    msg.reply('I have several possible answers. Which describes best your question?\n' + formatPossibleQuestions(questions) + '\n\nIf none of the above fits, you need to refine your question')
+  })
+}
+
+function handleUserQuestionChoice(questionTxt, msg, robot) {
+  let userId = msg.message.user.id
+
+  // Check if user already asked a question
+  let userData = robot.brain.get(userId)
+  if (userData) {
+    let msgIdx = parseInt(questionTxt)
+
+    // If not a number assume its a new question
+    if (!isNaN(msgIdx)) {
+
+      // Check that the user provided a valid question number
+      if (msgIdx < 1 || msgIdx > userData.questions.length) {
+        msg.reply('Didn\'t get that.. here are the options again:\n' + formatPossibleQuestions(userData.questions))
+        return true
       }
 
-      if (response.items.length === 0) {
-        msg.reply('Wow.. this is too much for me, don\'t have an answer for you. Try rephrasing your question')
-        return
-      }
+      // Answer question
+      answerQuestion(userData.questions[msgIdx - 1].question_id, userData.questions[msgIdx - 1].title, msg)
 
-      if (response.items.length === 1) {
-        answerQuestion(response.items[0].question_id, response.items[0].title, msg)
-        return
-      }
+      // Clear user question
+      robot.brain.remove(userId)
 
-      // Get the top 3 questions
-      let questions = response.items.sort((q1, q2) => {
-        return q2.up_vote_count - q1.up_vote_count
-      }).slice(0, 3);
+      return true
+    }
+  }
 
-      // Set the user questions
-      robot.brain.set(userId, {questions: questions})
-
-      msg.reply('I have several possible answers. Which describes best your question?\n' + formatPossibleQuestions(questions) + '\n\nIf none of the above fits, you need to refine your question')
-    })
-  });
+  return false
 }
 
 function answerQuestion(qId, qTitle, msg) {
@@ -112,6 +168,11 @@ function answerQuestion(qId, qTitle, msg) {
     if (err) {
       console.error('Answer error', err);
       msg.send('Oh oh.. something went wrong with answers', err)
+      return
+    }
+
+    if (response.items.length === 0) {
+      msg.send('Hmmm.. couldn\'t find an answer')
       return
     }
 
@@ -126,7 +187,12 @@ function answerQuestion(qId, qTitle, msg) {
       return
     }
 
-    msg.send('Hmmm.. couldn\'t find an answer')
+    // Find best answer
+    let bestAnswer = response.items.sort((a1, a2) => {
+      return a2.score - a1.score
+    })[0];
+
+    msg.send(entities.decode(bestAnswer.body_markdown))
 
   }, [qId])
 }
