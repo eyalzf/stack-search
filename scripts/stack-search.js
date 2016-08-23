@@ -8,6 +8,7 @@ const witClient = new Wit({
 })
 
 const GREETINGS = ['hi', 'hello', 'hi there', 'yo', 'hola!', 'what\'s up?', 'hello there', 'howdy', 'sup', 'ahoy', 'aloha']
+const GRATITUDES = ['sure thing', 'any time', 'no problem', 'you\'re welcome', 'that\'s nothing', 'no trouble', 'don\'t mention it', 'always a pleasure']
 
 const entities = new Entities();
 const options = { version: 2.2 }
@@ -62,6 +63,12 @@ module.exports = function(robot) {
         // Greet back
         if (intent === "greeting") {
           msg.reply(GREETINGS[Math.floor(Math.random() * GREETINGS.length)])
+          return
+        }
+
+        // Thank gratitude
+        if (intent === "gratitude") {
+          msg.reply(GRATITUDES[Math.floor(Math.random() * GRATITUDES.length)])
           return
         }
 
