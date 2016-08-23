@@ -1,0 +1,7 @@
+applications:
+- name: stack-search
+  buildpack: https://github.com/cloudfoundry/nodejs-buildpack.git
+  command: ./bin/hubot --adapter slack
+  path: .
+  instances: 1
+  memory: 256M
