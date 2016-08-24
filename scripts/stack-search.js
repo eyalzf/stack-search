@@ -55,7 +55,7 @@ module.exports = function(robot) {
       console.log('Wit response', JSON.stringify(data))
 
       // Check if there's an intent
-      if (data.entities.intent) {
+      if (data.entities.intent && data.entities.intent[0].confidence > 0.6) {
         let intent = data.entities.intent[0].value
 
         console.log('Intent: ', intent)
