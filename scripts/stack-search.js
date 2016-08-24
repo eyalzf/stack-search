@@ -170,7 +170,7 @@ function handleUserQuestionChoice(questionTxt, msg, robot) {
 
 function answerQuestion(qId, qTitle, msg) {
 
-  msg.send('Here is what I know about *' + qTitle + "*")
+  msg.send('Here is what I know about *' + entities.decode(qTitle) + "*")
   context.questions.answers(questionQuery, function(err, response) {
     if (err) {
       console.error('Answer error', err);
@@ -208,7 +208,7 @@ function formatPossibleQuestions(questions) {
   let str = ""
 
   questions.forEach((q, idx) => {
-    str += (idx + 1) + ") *" + q.title + "*\n"
+    str += (idx + 1) + ") *" + entities.decode(q.title) + "*\n"
   })
 
   return str
