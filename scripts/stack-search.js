@@ -1,20 +1,25 @@
 const stackexchange = require('stackexchange')
 const Entities = require('html-entities').AllHtmlEntities
 const {Wit, log} = require('node-wit');
+const parseString = require('xml2js').parseString
+const request = require('request')
+const queryString = require('query-string')
 
 const STACK_SEARCH_WIT_TOKEN = process.env.WIT_TOKEN
 const witClient = new Wit({
   accessToken: STACK_SEARCH_WIT_TOKEN
 })
 
+const STACK_SEARCH_WOLFRAM_ALPHA_APPID = process.env.WOLFRAM_ALPHA_APPID
+
 const GREETINGS = ['hi', 'hello', 'hi there', 'yo', 'hola!', 'what\'s up?', 'hello there', 'howdy', 'sup', 'ahoy', 'aloha']
 const GRATITUDES = ['sure thing', 'any time', 'no problem', 'you\'re welcome', 'that\'s nothing', 'no trouble', 'don\'t mention it', 'always a pleasure']
 
 const entities = new Entities();
 const options = { version: 2.2 }
-const context = new stackexchange(options)
+const stackExchangeContext = new stackexchange(options)
 
-let searchQuery = {
+let stackExchangeSearchQuery = {
   site: 'stackoverflow',
   sort: 'relevance',
   order: 'desc',
@@ -30,6 +35,11 @@ let questionQuery = {
   filter: '!9YdnSM68f'
 }
 
+let wolframQuery = {
+  appid: STACK_SEARCH_WOLFRAM_ALPHA_APPID,
+  format: 'plaintext'
+}
+
 module.exports = function(robot) {
 
   robot.respond(/debug/, function(msg) {
@@ -37,6 +47,22 @@ module.exports = function(robot) {
     console.log(msg.robot.name)
     console.log(msg.message.text)
     console.log(msgTxt)
+  })
+
+  robot.respond(/test/, function(msg) {
+    wolframQuery.input = 'parse string to int?'
+    console.log('http://api.wolframalpha.com/v2/query?' + queryString.stringify(wolframQuery))
+    request('http://api.wolframalpha.com/v2/query?' + queryString.stringify(wolframQuery), function(err, res, body) {
+      if (err || res.statusCode !== 200) {
+        console.error('Wolfram error', err)
+        return
+      }
+
+      parseString(body, function (err, result) {
+          console.log('Success: ', result.queryresult.$.success)
+          console.dir(JSON.stringify(result));
+      });
+    })
   })
 
   // Listen to anyone approaching this bot
@@ -80,8 +106,8 @@ module.exports = function(robot) {
       }
 
       // Check if there's a technical question
-      if (data.entities.tech_question && data.entities.tech_question[0].confidence > 0.5) {
-        handleQuestion(data.entities.tech_question[0].value, msg, robot)
+      if (data.entities.question_body && data.entities.question_body[0].confidence > 0.5) {
+        handleQuestion(data.entities.question_body[0].value, msg, robot)
         return
       }
 
@@ -101,15 +127,65 @@ function handleQuestion(questionTxt, msg, robot) {
   robot.brain.remove(userId)
 
   // If message is just one word don't run the search
-  if (questionTxt.split(' ').length === 1) {
+  if (questionTxt.split(' ').length === 1 && !isNaN(parseInt(questionTxt.trim()))) {
     msg.reply('Not quite sure what you expect me to do with *' + questionTxt + '*')
     return
   }
 
-  searchQuery.q = questionTxt
+  wolframQuery.input = questionTxt
+
+  // Try a general question first
+  request('http://api.wolframalpha.com/v2/query?' + queryString.stringify(wolframQuery), function(err, res, body) {
+
+    // If error returned try a technical question
+    if (err || res.statusCode !== 200) {
+      console.error('Wolfram error', err)
+      handleStackExchangeQuestion(questionTxt, msg, robot)
+      return
+    }
+
+    parseString(body, function (err, result) {
+        console.log('Wolfram response:', JSON.stringify(result));
+
+        // If general question has no result try a technical question
+        if (result.queryresult.$.success === 'false') {
+          handleStackExchangeQuestion(questionTxt, msg, robot)
+          return
+        }
+
+        // Get the identity pod to show actual search terms used
+        let identityPod = result.queryresult.pod.find((pod) => {
+          return pod.$.scanner === 'Identity'
+        })
+
+        // If no identity pods revert to technical question
+        if (!identityPod) {
+          handleStackExchangeQuestion(questionTxt, msg, robot)
+          return
+        }
+
+        // Get the primary response pod
+        let primaryPod = result.queryresult.pod.find((pod) => {
+          return pod.$.primary === 'true'
+        })
+
+        // If no primary pod use the first (except identity)
+        if (!primaryPod) {
+          primaryPod = result.queryresult.pod[1]
+        }
+
+        msg.send('Here is what I know about *' + identityPod.subpod[0].plaintext[0] + '*')
+        msg.send(primaryPod.subpod[0].plaintext[0])
+    })
+  })
+}
+
+function handleStackExchangeQuestion(questionTxt, msg, robot) {
+  let userId = msg.message.user.id
+  stackExchangeSearchQuery.q = questionTxt
 
   // Perform advanced search
-  context.search.advanced(searchQuery, function(err, response) {
+  stackExchangeContext.search.advanced(stackExchangeSearchQuery, function(err, response) {
     if (err) {
       console.error('Search error', err);
       msg.send('Oh oh.. something went wrong with search', err)
@@ -171,7 +247,7 @@ function handleUserQuestionChoice(questionTxt, msg, robot) {
 function answerQuestion(qId, qTitle, msg) {
 
   msg.send('Here is what I know about *' + entities.decode(qTitle) + "*")
-  context.questions.answers(questionQuery, function(err, response) {
+  stackExchangeContext.questions.answers(questionQuery, function(err, response) {
     if (err) {
       console.error('Answer error', err);
       msg.send('Oh oh.. something went wrong with answers', err)
