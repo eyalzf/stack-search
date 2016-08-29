@@ -75,43 +75,51 @@ module.exports = function(robot) {
     // See if this is a response for question choice
     if (handleUserQuestionChoice(msgTxt, msg, robot)) return
 
-    // See if this is a request for more details
-    if (handleWolframMoreDetails(msgTxt, msg, robot)) return
-
     witClient.message(msgTxt, {})
     .then((data) => {
 
       console.log('Wit response', JSON.stringify(data))
 
       // Check if there's an intent
-      if (data.entities.intent && data.entities.intent[0].confidence > 0.6) {
+      let intent = extractEntity(data, 'intent', 0.6)
+      if (intent) {
         let intent = data.entities.intent[0].value
 
-        console.log('Intent: ', intent)
+        console.log('Intent: ', intent.value)
 
         // Greet back
-        if (intent === "greeting") {
+        if (intent.value === "greeting") {
           msg.reply(msg.random(GREETINGS))
           return
         }
 
         // Thank gratitude
-        if (intent === "gratitude") {
-          let giphyPrefix = Math.random() >= 0.5 ? '/giphy ' : ''
-          msg.reply(giphyPrefix + msg.random(GRATITUDES))
+        if (intent.value === "gratitude") {
+          msg.reply(msg.random(GRATITUDES))
           return
         }
 
         // Say what this bot does
-        if (intent === "help") {
+        if (intent.value === "help") {
           msg.reply('I\'m a technical wiz. Just ask me any technical question')
           return
         }
       }
 
+      // Yes/No response
+      let yes_no = extractEntity(data, 'yes_no', 0.5)
+      if (yes_no) {
+        // See if this is a request for more details
+        if (handleWolframMoreDetails(yes_no.value, msg, robot)) return
+
+        msg.reply('I don\'t get it. What do you mean by\'' + msgTxt + '\'')
+        return
+      }
+
       // Check if there's a technical question
-      if (data.entities.question_body && data.entities.question_body[0].confidence > 0.5) {
-        handleQuestion(data.entities.question_body[0].value, msg, robot)
+      let question_body = extractEntity(data, 'question_body', 0.5)
+      if (question_body) {
+        handleQuestion(question_body.value, msg, robot)
         return
       }
 
@@ -301,8 +309,12 @@ function handleWolframMoreDetails(questionTxt, msg, robot) {
   if (userData && userData.answerDetails) {
 
     // Check if msg is 'yes'
-    if (questionTxt.toLowerCase().trim() === 'yes') {
+    if (questionTxt === 'yes') {
       msg.send(userData.answerDetails.detailedAnswer)
+      return true
+    }
+
+    if (questionTxt === 'no') {
       return true
     }
   }
@@ -325,7 +337,7 @@ function createWolframAnswer(result) {
   answerDetails.identityTitle = identityPod.subpod[0].plaintext[0];
 
   let validPods = result.queryresult.pod.filter((pod) => {
-    return pod.$.scanner !== 'Identity' && pod.subpod[0].plaintext[0] !== '' && pod.subpod[0].plaintext[0] !== '(data not available)'
+    return pod.$.scanner !== 'Identity' && !isEmptyPlaintext(pod.subpod[0].plaintext[0])
   })
 
   // If no valid pods return an empty result
@@ -350,7 +362,7 @@ function createWolframAnswer(result) {
 
     // Add the subpods details
     pod.subpod.filter((subpod) => {
-      return subpod.plaintext[0] !== '' && subpod.plaintext[0] !== '(data not available)'
+      return !isEmptyPlaintext(subpod.plaintext[0])
     }).forEach((subpod) => {
       if (subpod.$.title !== '') {
         detailedAnswer += '_' + subpod.$.title + ':_\n'
@@ -364,4 +376,12 @@ function createWolframAnswer(result) {
 
 
   return answerDetails
+}
+
+function extractEntity(data, entityName, confidence) {
+  if (data.entities[entityName] && data.entities[entityName][0].confidence >= confidence) return data.entities[entityName][0]
+}
+
+function isEmptyPlaintext(txt) {
+  return txt.trim() === '' || txt.trim() === '(data not available)'
 }
