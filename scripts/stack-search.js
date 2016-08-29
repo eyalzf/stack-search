@@ -115,11 +115,12 @@ module.exports = function(robot) {
         return
       }
 
-      handleQuestion(msgTxt, msg, robot)
+      //handleQuestion(msgTxt, msg, robot)
+      msg.reply('Sorry, I don\'t know what to do with \'' + msgTxt + '\' in this context. But I\'m learning new things every day')
     })
     .catch((err) => {
       console.error('Wit error', err)
-      handleQuestion(msgTxt, msg, robot)
+      msg.reply('Oops, something went wrong and I can\'t understand \'' + msgTxt + '\'. Call a robo-doctor, someone should really take a look at me')
     })
   });
 }
