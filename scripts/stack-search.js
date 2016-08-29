@@ -12,7 +12,7 @@ const witClient = new Wit({
 
 const STACK_SEARCH_WOLFRAM_ALPHA_APPID = process.env.WOLFRAM_ALPHA_APPID
 
-const GREETINGS = ['hi', 'hello', 'hi there', 'yo', 'hola!', 'what\'s up?', 'hello there', 'howdy', 'sup', 'ahoy', 'aloha']
+const GREETINGS = ['hi', 'hello', 'hi there', 'yo', 'hola!', 'what\'s up?', 'hello there', 'howdy', 'sup', 'ahoy', 'aloha', 'shalom', 'greetings']
 const GRATITUDES = ['sure thing', 'any time', 'no problem', 'you\'re welcome', 'that\'s nothing', 'no trouble', 'don\'t mention it', 'always a pleasure']
 
 const entities = new Entities();
@@ -75,6 +75,9 @@ module.exports = function(robot) {
     // See if this is a response for question choice
     if (handleUserQuestionChoice(msgTxt, msg, robot)) return
 
+    // See if this is a request for more details
+    if (handleWolframMoreDetails(msgTxt, msg, robot)) return
+
     witClient.message(msgTxt, {})
     .then((data) => {
 
@@ -88,13 +91,14 @@ module.exports = function(robot) {
 
         // Greet back
         if (intent === "greeting") {
-          msg.reply(GREETINGS[Math.floor(Math.random() * GREETINGS.length)])
+          msg.reply(msg.random(GREETINGS))
           return
         }
 
         // Thank gratitude
         if (intent === "gratitude") {
-          msg.reply(GRATITUDES[Math.floor(Math.random() * GRATITUDES.length)])
+          let giphyPrefix = Math.random() >= 0.5 ? '/giphy ' : ''
+          msg.reply(giphyPrefix + msg.random(GRATITUDES))
           return
         }
 
@@ -153,29 +157,27 @@ function handleQuestion(questionTxt, msg, robot) {
           return
         }
 
-        // Get the identity pod to show actual search terms used
-        let identityPod = result.queryresult.pod.find((pod) => {
-          return pod.$.scanner === 'Identity'
-        })
+        // Get formatted answer
+        let answerDetails = createWolframAnswer(result)
 
-        // If no identity pods revert to technical question
-        if (!identityPod) {
+        // If no details try a technical question
+        if (!answerDetails) {
           handleStackExchangeQuestion(questionTxt, msg, robot)
           return
         }
 
-        // Get the primary response pod
-        let primaryPod = result.queryresult.pod.find((pod) => {
-          return pod.$.primary === 'true'
-        })
-
-        // If no primary pod use the first (except identity)
-        if (!primaryPod) {
-          primaryPod = result.queryresult.pod[1]
+        // If there's a short answer show it and suggest more
+        if (answerDetails.shortAnswer) {
+          robot.brain.set(userId, {answerDetails: answerDetails})
+          msg.send('Here is what I know about *' + answerDetails.identityTitle + '*')
+          msg.send(answerDetails.shortAnswer)
+          msg.reply('\nDo you want to know more?')
+          return
         }
 
-        msg.send('Here is what I know about *' + identityPod.subpod[0].plaintext[0] + '*')
-        msg.send(primaryPod.subpod[0].plaintext[0])
+        // If no short answer just show the full details
+        msg.send('Here is everything I know about *' + answerDetails.identityTitle + '*')
+        msg.send(answerDetails.detailedAnswer)
     })
   })
 }
@@ -219,7 +221,7 @@ function handleUserQuestionChoice(questionTxt, msg, robot) {
 
   // Check if user already asked a question
   let userData = robot.brain.get(userId)
-  if (userData) {
+  if (userData && userData.questions) {
     let msgIdx = parseInt(questionTxt)
 
     // If not a number assume its a new question
@@ -288,4 +290,77 @@ function formatPossibleQuestions(questions) {
   })
 
   return str
+}
+
+function handleWolframMoreDetails(questionTxt, msg, robot) {
+  let userId = msg.message.user.id
+
+  // Check if user replyed yes to more details
+  let userData = robot.brain.get(userId)
+  if (userData && userData.answerDetails) {
+
+    // Check if msg is 'yes'
+    if (questionTxt.toLowerCase().trim() === 'yes') {
+      msg.send(userData.answerDetails.detailedAnswer)
+      return true
+    }
+  }
+
+  return false
+}
+
+function createWolframAnswer(result) {
+  let answerDetails = {}
+
+  // Get the identity pod to show actual search terms used
+  let identityPod = result.queryresult.pod.find((pod) => {
+    return pod.$.scanner === 'Identity'
+  })
+
+  // If no identity pods return an empty result
+  if (!identityPod) return
+
+  // Set the identity title
+  answerDetails.identityTitle = identityPod.subpod[0].plaintext[0];
+
+  let validPods = result.queryresult.pod.filter((pod) => {
+    return pod.$.scanner !== 'Identity' && pod.subpod[0].plaintext[0] !== '' && pod.subpod[0].plaintext[0] !== '(data not available)'
+  })
+
+  // If no valid pods return an empty result
+  if (validPods.length === 0) return
+
+  // Get the primary response pod
+  let primaryPod = validPods.find((pod) => {
+    return pod.$.primary === 'true'
+  })
+
+  // Set the short answer from the primary pod
+  if (validPods.length > 1 && primaryPod) {
+    answerDetails.shortAnswer = primaryPod.subpod[0].plaintext[0]
+  }
+
+  // Create the detailed answer
+  let detailedAnswer = ''
+  validPods.forEach((pod) => {
+
+    // Add the pod title
+    detailedAnswer += '*' + pod.$.title + '*\n'
+
+    // Add the subpods details
+    pod.subpod.filter((subpod) => {
+      return subpod.plaintext[0] !== '' && subpod.plaintext[0] !== '(data not available)'
+    }).forEach((subpod) => {
+      if (subpod.$.title !== '') {
+        detailedAnswer += '_' + subpod.$.title + ':_\n'
+      }
+
+      detailedAnswer += subpod.plaintext[0] + '\n\n'
+    })
+  })
+
+  answerDetails.detailedAnswer = detailedAnswer.trim()
+
+
+  return answerDetails
 }
