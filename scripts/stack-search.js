@@ -83,8 +83,6 @@ module.exports = function(robot) {
       // Check if there's an intent
       let intent = extractEntity(data, 'intent', 0.6)
       if (intent) {
-        let intent = data.entities.intent[0].value
-
         console.log('Intent: ', intent.value)
 
         // Greet back
