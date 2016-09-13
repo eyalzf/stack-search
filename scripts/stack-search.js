@@ -12,7 +12,7 @@ const witClient = new Wit({
 
 const STACK_SEARCH_WOLFRAM_ALPHA_APPID = process.env.WOLFRAM_ALPHA_APPID
 
-const GREETINGS = ['hi', 'hello', 'hi there', 'yo', 'hola!', 'what\'s up?', 'hello there', 'howdy', 'sup', 'ahoy', 'aloha', 'shalom', 'greetings']
+const GREETINGS = ['hi', 'hello', 'hi there', 'yo', 'hola!', 'what\'s up?', 'hello there', 'howdy', 'sup', 'ahoy', 'aloha', 'shalom', 'greetings', ':wave:']
 const GRATITUDES = ['sure thing', 'any time', 'no problem', 'you\'re welcome', 'that\'s nothing', 'no trouble', 'don\'t mention it', 'always a pleasure']
 
 const entities = new Entities();
@@ -28,7 +28,7 @@ let stackExchangeSearchQuery = {
   pagesize: 10
 }
 
-let questionQuery = {
+let stackExchangeAnswerQuery = {
   site: 'stackoverflow',
   sort: 'activity',
   order: 'desc',
@@ -69,12 +69,13 @@ module.exports = function(robot) {
   robot.respond(/.*/, function(msg) {
 
     // Extract the actual question
-    let botNameRegEx = new RegExp("@*" + msg.robot.name + ":*")
+    let botNameRegEx = new RegExp('@*' + msg.robot.name + ':*')
     let msgTxt = msg.message.text.replace(botNameRegEx, '').trim()
 
     // See if this is a response for question choice
     if (handleUserQuestionChoice(msgTxt, msg, robot)) return
 
+    // Understand the question using wit.ai
     witClient.message(msgTxt, {})
     .then((data) => {
 
@@ -83,7 +84,6 @@ module.exports = function(robot) {
       // Check if there's an intent
       let intent = extractEntity(data, 'intent', 0.6)
       if (intent) {
-        console.log('Intent: ', intent.value)
 
         // Greet back
         if (intent.value === "greeting") {
@@ -110,23 +110,23 @@ module.exports = function(robot) {
         // See if this is a request for more details
         if (handleWolframMoreDetails(yes_no.value, msg, robot)) return
 
-        msg.reply('I don\'t get it. What do you mean by\'' + msgTxt + '\'')
+        msg.reply('I don\'t get it. What do you mean by \'_' + msgTxt + '_\'?')
         return
       }
 
-      // Check if there's a technical question
-      let question_body = extractEntity(data, 'question_body', 0.5)
+      // Check if there's a question
+      let question_body = extractQuestionEntity(data, 'question_body', 0.5)
       if (question_body) {
         handleQuestion(question_body.value, msg, robot)
         return
       }
 
       //handleQuestion(msgTxt, msg, robot)
-      msg.reply('Sorry, I don\'t know what to do with \'' + msgTxt + '\' in this context. But I\'m learning new things every day')
+      msg.reply('Sorry, I don\'t know what to do with \'_' + msgTxt + '_\' in this context. But I\'m learning new things every day. It\'s exciting!')
     })
     .catch((err) => {
       console.error('Wit error', err)
-      msg.reply('Oops, something went wrong and I can\'t understand \'' + msgTxt + '\'. Call a robo-doctor, someone should really take a look at me')
+      msg.reply('Oops, something went wrong and I can\'t understand \'_' + msgTxt + '_\'. Call a robo-doctor, someone should really take a look at me')
     })
   });
 }
@@ -256,7 +256,7 @@ function handleUserQuestionChoice(questionTxt, msg, robot) {
 function answerQuestion(qId, qTitle, msg) {
 
   msg.send('Here is what I know about *' + entities.decode(qTitle) + "*")
-  stackExchangeContext.questions.answers(questionQuery, function(err, response) {
+  stackExchangeContext.questions.answers(stackExchangeAnswerQuery, function(err, response) {
     if (err) {
       console.error('Answer error', err);
       msg.send('Oh oh.. something went wrong with answers', err)
@@ -378,6 +378,22 @@ function createWolframAnswer(result) {
 
 function extractEntity(data, entityName, confidence) {
   if (data.entities[entityName] && data.entities[entityName][0].confidence >= confidence) return data.entities[entityName][0]
+}
+
+function extractQuestionEntity(data, entityName, confidence) {
+  let questionEntities = data.entities[entityName]
+
+  if (questionEntities) {
+    let questionTitle = ''
+    questionEntities.forEach((questionEntity) => {
+      if (questionEntity.confidence >= confidence)
+        questionTitle += ' ' + questionEntity.value
+    })
+
+    return {
+      value: questionTitle
+    }
+  }
 }
 
 function isEmptyPlaintext(txt) {
